@@ -1,0 +1,49 @@
+-- AntiCheatBypass Module
+
+local function setupAntiCheatBypass(config)
+    local Players = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local char = Players.LocalPlayer.Character or Players.LocalPlayer.CharacterAdded:Wait()
+    local hum = char:WaitForChild("Humanoid")
+    local hrp = char:WaitForChild("HumanoidRootPart")
+
+    -- Block Humanoid State Change (e.g., getting stunned, falling over)
+    hum.StateChanged:Connect(function(old, new)
+        if new == Enum.HumanoidStateType.Physics or new == Enum.HumanoidStateType.FallingDown or new == Enum.HumanoidStateType.Ragdoll then
+            hum:ChangeState(Enum.HumanoidStateType.GettingUp)
+        end
+    end)
+
+    -- Constantly Restore Movement Stats (to prevent forced reset)
+    RunService.Stepped:Connect(function()
+        if config.DefaultPlayerAdjustment then
+            hum.WalkSpeed = config.DefaultPlayerAdjustment.Speed or 16
+            hum.JumpPower = config.DefaultPlayerAdjustment.JumpHeight or 50
+            hum.UseJumpPower = true
+        end
+    end)
+
+    -- Block External Scripts Changing Properties
+    local mt = getrawmetatable(game)
+    local oldNamecall = mt.__namecall
+    setreadonly(mt, false)
+
+    mt.__namecall = newcclosure(function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+
+        if method == "FireServer" and tostring(self) == "ResetCharacterRemote" then
+            -- Block forced reset
+            return
+        elseif method == "FireServer" and tostring(self):lower():find("kick") then
+            -- Block client kicks
+            return
+        end
+
+        return oldNamecall(self, unpack(args))
+    end)
+
+    setreadonly(mt, true)
+end
+
+return setupAntiCheatBypass
