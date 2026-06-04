@@ -1,0 +1,604 @@
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local LP = Players.LocalPlayer
+local PREFIX = ":"
+local AMOUNT = 500
+local function isMobile()
+return UserInputService:GetLastInputType() == Enum.UserInputType.Touch or
+UserInputService:GetLastInputType() == Enum.UserInputType.Gamepad1
+end
+local ScreenGui = CoreGui:FindFirstChild("PopItPopupGUI") or Instance.new("ScreenGui")
+ScreenGui.Name = "PopItPopupGUI"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+local floatingButtonRef = nil
+local function makeDraggable(frame, handle)
+handle = handle or frame
+local dragging = false
+local dragInput
+local dragStart
+local startPos
+local lastInput
+local dragThreshold = 5
+local hasMoved = false
+local function updateDrag(input)
+if not dragging then return end
+local delta = input.Position - dragStart
+local distance = math.sqrt(delta.X^2 + delta.Y^2)
+if distance > dragThreshold then
+hasMoved = true
+end
+if hasMoved then
+frame.Position = UDim2.new( startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y
+)
+end
+end
+handle.InputBegan:Connect(function(input, gameProcessed)
+if gameProcessed then return end
+if input.UserInputType == Enum.UserInputType.MouseButton1 or
+input.UserInputType == Enum.UserInputType.Touch then
+dragging = true
+hasMoved = false
+dragStart = input.Position
+startPos = frame.Position
+lastInput = input
+dragInput = input.InputChanged:Connect(function()
+updateDrag(lastInput)
+end)
+end
+end)
+UserInputService.InputChanged:Connect(function(input, gameProcessed)
+if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or
+input.UserInputType == Enum.UserInputType.Touch) then
+lastInput = input
+updateDrag(input)
+end
+end)
+handle.InputEnded:Connect(function(input, gameProcessed)
+if input.UserInputType == Enum.UserInputType.MouseButton1 or
+input.UserInputType == Enum.UserInputType.Touch then
+dragging = false
+if dragInput then
+dragInput:Disconnect()
+dragInput = nil
+end
+end
+end)
+return hasMoved
+end
+function getDisplayName(item)
+if not item then return "Unknown" end
+local attr = item:GetAttribute("DisplayName")
+if attr and attr ~= "" then return tostring(attr) end
+local sv = item:FindFirstChild("DisplayName")
+if sv and sv:IsA("StringValue") and sv.Value ~= "" then return sv.Value end
+local config = item:FindFirstChild("Configuration")
+if config then
+local dn = config:FindFirstChild("DisplayName")
+if dn and dn:IsA("StringValue") and dn.Value ~= "" then return dn.Value end
+end
+if item:IsA("Tool") and item.ToolTip and item.ToolTip ~= "" then return item.ToolTip end
+for _, gui in ipairs(item:GetDescendants()) do
+if gui:IsA("BillboardGui") or gui:IsA("SurfaceGui") then
+local lbl = gui:FindFirstChildOfClass("TextLabel")
+if lbl and lbl.Text ~= "" then return lbl.Text end
+end
+end
+return item.Name
+end
+local function showNotification(title, message, color)
+local notify = Instance.new("Frame")
+notify.Size = UDim2.new(0, 300, 0, 60)
+notify.Position = UDim2.new(1, 10, 0, 100)
+notify.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
+notify.BorderSizePixel = 0
+notify.ZIndex = 150
+notify.Parent = ScreenGui
+local notifyCorner = Instance.new("UICorner")
+notifyCorner.CornerRadius = UDim.new(0, 8)
+notifyCorner.Parent = notify
+local notifyStroke = Instance.new("UIStroke")
+notifyStroke.Thickness = 1.5
+notifyStroke.Color = color or Color3.fromRGB(100, 200, 100)
+notifyStroke.Parent = notify
+local bar = Instance.new("Frame")
+bar.Size = UDim2.new(0, 4, 1, 0)
+bar.BackgroundColor3 = color or Color3.fromRGB(100, 200, 100)
+bar.BorderSizePixel = 0
+bar.ZIndex = 151
+bar.Parent = notify
+local titleLabel = Instance.new("TextLabel")
+titleLabel.Size = UDim2.new(1, -12, 0, 18)
+titleLabel.Position = UDim2.new(0, 10, 0, 6)
+titleLabel.BackgroundTransparency = 1
+titleLabel.Text = title
+titleLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+titleLabel.TextSize = 12
+titleLabel.Font = Enum.Font.GothamBold
+titleLabel.TextXAlignment = Enum.TextXAlignment.Left
+titleLabel.ZIndex = 151
+titleLabel.Parent = notify
+local msgLabel = Instance.new("TextLabel")
+msgLabel.Size = UDim2.new(1, -12, 0, 16)
+msgLabel.Position = UDim2.new(0, 10, 0, 26)
+msgLabel.BackgroundTransparency = 1
+msgLabel.Text = message
+msgLabel.TextColor3 = Color3.fromRGB(180, 180, 190)
+msgLabel.TextSize = 11
+msgLabel.Font = Enum.Font.Gotham
+msgLabel.TextXAlignment = Enum.TextXAlignment.Left
+msgLabel.ZIndex = 151
+msgLabel.Parent = notify
+local slideIn = TweenService:Create(notify, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(1, -310, 0, 100)}
+)
+slideIn:Play()
+task.delay(3, function()
+if notify and notify.Parent then
+local slideOut = TweenService:Create(notify, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Position = UDim2.new(1, 10, 0, 100)}
+)
+slideOut:Play()
+slideOut.Completed:Connect(function()
+if notify then notify:Destroy() end
+end)
+end
+end)
+end
+local function createItemsGUI(initialSearch)
+if floatingButtonRef and floatingButtonRef.Parent then
+floatingButtonRef.Visible = false
+floatingButtonRef.Active = false
+end
+local oldGUI = ScreenGui:FindFirstChild("ItemsListGUI")
+if oldGUI then oldGUI:Destroy() end
+local isMobileDevice = isMobile()
+local guiSize
+local guiPosition
+if isMobileDevice then
+guiSize = UDim2.new(0.9, 0, 0.8, 0)
+guiPosition = UDim2.new(0.05, 0, 0.1, 0)
+else
+guiSize = UDim2.new(0, 500, 0, 500)
+guiPosition = UDim2.new(0.5, -250, 0.5, -250)
+end
+local itemsFrame = Instance.new("Frame")
+itemsFrame.Name = "ItemsListGUI"
+itemsFrame.Size = guiSize
+itemsFrame.Position = guiPosition
+itemsFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+itemsFrame.BorderSizePixel = 0
+itemsFrame.ZIndex = 200
+itemsFrame.Parent = ScreenGui
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 12)
+corner.Parent = itemsFrame
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(80, 120, 255)
+stroke.Parent = itemsFrame
+local header = Instance.new("Frame")
+header.Name = "Header"
+header.Size = UDim2.new(1, 0, 0, 50)
+header.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+header.BorderSizePixel = 0
+header.ZIndex = 201
+header.Parent = itemsFrame
+local headerCorner = Instance.new("UICorner")
+headerCorner.CornerRadius = UDim.new(0, 12)
+headerCorner.Parent = header
+local headerFix = Instance.new("Frame")
+headerFix.Size = UDim2.new(1, 0, 0, 12)
+headerFix.Position = UDim2.new(0, 0, 1, -12)
+headerFix.BackgroundColor3 = Color3.fromRGB(20, 20, 28)
+headerFix.BorderSizePixel = 0
+headerFix.ZIndex = 201
+headerFix.Parent = header
+local title = Instance.new("TextLabel")
+title.Size = UDim2.new(1, -60, 1, 0)
+title.Position = UDim2.new(0, 15, 0, 0)
+title.BackgroundTransparency = 1
+title.Text = "📦 All Items"
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextSize = isMobileDevice and 14 or 16
+title.Font = Enum.Font.GothamBold
+title.TextXAlignment = Enum.TextXAlignment.Left
+title.ZIndex = 202
+title.Parent = header
+local closeBtn = Instance.new("TextButton")
+if isMobileDevice then
+closeBtn.Size = UDim2.new(0, 45, 0, 45)
+closeBtn.Position = UDim2.new(1, -55, 0.5, -22)
+else
+closeBtn.Size = UDim2.new(0, 30, 0, 30)
+closeBtn.Position = UDim2.new(1, -40, 0.5, -15)
+end
+closeBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+closeBtn.Text = "✕"
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextSize = isMobileDevice and 24 or 14
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.ZIndex = 202
+closeBtn.Parent = header
+local closeBtnCorner = Instance.new("UICorner")
+closeBtnCorner.CornerRadius = UDim.new(0, 6)
+closeBtnCorner.Parent = closeBtn
+local searchBarFrame = Instance.new("Frame")
+searchBarFrame.Size = UDim2.new(1, -20, 0, 45)
+searchBarFrame.Position = UDim2.new(0, 10, 0, 60)
+searchBarFrame.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+searchBarFrame.BorderSizePixel = 0
+searchBarFrame.ZIndex = 201
+searchBarFrame.Parent = itemsFrame
+local searchCorner = Instance.new("UICorner")
+searchCorner.CornerRadius = UDim.new(0, 8)
+searchCorner.Parent = searchBarFrame
+local searchStroke = Instance.new("UIStroke")
+searchStroke.Thickness = 1.5
+searchStroke.Color = Color3.fromRGB(80, 120, 255)
+searchStroke.Parent = searchBarFrame
+local searchIcon = Instance.new("TextLabel")
+searchIcon.Size = UDim2.new(0, 30, 1, 0)
+searchIcon.Position = UDim2.new(0, 8, 0, 0)
+searchIcon.BackgroundTransparency = 1
+searchIcon.Text = "🔍"
+searchIcon.TextColor3 = Color3.fromRGB(100, 120, 140)
+searchIcon.TextSize = 16
+searchIcon.Font = Enum.Font.Gotham
+searchIcon.ZIndex = 202
+searchIcon.Parent = searchBarFrame
+local searchBox = Instance.new("TextBox")
+searchBox.Size = UDim2.new(1, -50, 1, 0)
+searchBox.Position = UDim2.new(0, 40, 0, 0)
+searchBox.BackgroundTransparency = 1
+searchBox.Text = initialSearch or ""
+searchBox.PlaceholderText = "Search items..."
+searchBox.PlaceholderColor3 = Color3.fromRGB(80, 100, 120)
+searchBox.TextColor3 = Color3.fromRGB(200, 200, 200)
+searchBox.TextSize = isMobileDevice and 12 or 14
+searchBox.Font = Enum.Font.Gotham
+searchBox.ZIndex = 202
+searchBox.ClearTextOnFocus = false
+searchBox.Parent = searchBarFrame
+local clearBtn = Instance.new("TextButton")
+clearBtn.Size = UDim2.new(0, 30, 1, 0)
+clearBtn.Position = UDim2.new(1, -35, 0, 0)
+clearBtn.BackgroundTransparency = 1
+clearBtn.Text = "✕"
+clearBtn.TextColor3 = Color3.fromRGB(150, 150, 160)
+clearBtn.TextSize = 16
+clearBtn.Font = Enum.Font.GothamBold
+clearBtn.ZIndex = 202
+clearBtn.Parent = searchBarFrame
+clearBtn.MouseButton1Click:Connect(function()
+searchBox.Text = ""
+searchBox:CaptureFocus()
+end)
+local scrollFrame = Instance.new("ScrollingFrame")
+scrollFrame.Size = UDim2.new(1, -20, 1, -125)
+scrollFrame.Position = UDim2.new(0, 10, 0, 115)
+scrollFrame.BackgroundTransparency = 1
+scrollFrame.BorderSizePixel = 0
+scrollFrame.ScrollBarThickness = isMobileDevice and 8 or 6
+scrollFrame.ScrollBarImageColor3 = Color3.fromRGB(80, 120, 255)
+scrollFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+scrollFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
+scrollFrame.ZIndex = 201
+scrollFrame.Parent = itemsFrame
+local listLayout = Instance.new("UIListLayout")
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 4)
+listLayout.Parent = scrollFrame
+local itemsFolder = ReplicatedStorage:FindFirstChild("Items")
+local totalItems = 0
+if not itemsFolder then
+local errorLabel = Instance.new("TextLabel")
+errorLabel.Size = UDim2.new(1, 0, 0, 40)
+errorLabel.BackgroundTransparency = 1
+errorLabel.Text = "❌ Items folder not found in ReplicatedStorage!"
+errorLabel.TextColor3 = Color3.fromRGB(200, 50, 50)
+errorLabel.TextSize = 14
+errorLabel.Font = Enum.Font.Gotham
+errorLabel.ZIndex = 202
+errorLabel.Parent = scrollFrame
+showNotification("Error", "Items folder not found!", Color3.fromRGB(200, 50, 50))
+return
+end
+for _, item in ipairs(itemsFolder:GetChildren()) do
+if item:IsA("Instance") then
+totalItems = totalItems + 1
+end
+end
+local infoLabel = Instance.new("TextLabel")
+infoLabel.Name = "InfoLabel"
+infoLabel.Size = UDim2.new(1, 0, 0, 30)
+infoLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+infoLabel.Text = "🎮 Game has " .. totalItems .. " items"
+infoLabel.TextColor3 = Color3.fromRGB(120, 120, 140)
+infoLabel.TextSize = isMobileDevice and 11 or 12
+infoLabel.Font = Enum.Font.Gotham
+infoLabel.ZIndex = 202
+infoLabel.LayoutOrder = 1
+infoLabel.Parent = scrollFrame
+local infoCorner = Instance.new("UICorner")
+infoCorner.CornerRadius = UDim.new(0, 6)
+infoCorner.Parent = infoLabel
+local function updateItemsList(searchTerm)
+for _, child in ipairs(scrollFrame:GetChildren()) do
+if child:IsA("Frame") and child.Name ~= "UIListLayout" and child.Name ~= "InfoLabel" then
+child:Destroy()
+end
+end
+local filteredItems = {}
+for _, item in ipairs(itemsFolder:GetChildren()) do
+if item:IsA("Instance") then
+local displayName = getDisplayName(item)
+local realName = item.Name
+if not searchTerm or searchTerm == "" then
+table.insert(filteredItems, {item = item, display = displayName, real = realName})
+else
+local search = string.lower(tostring(searchTerm))
+local displayLower = string.lower(displayName)
+local realLower = string.lower(realName)
+if string.find(displayLower, search, 1, true) or
+string.find(realLower, search, 1, true) then
+table.insert(filteredItems, {item = item, display = displayName, real = realName})
+end
+end
+end
+end
+for i, itemData in ipairs(filteredItems) do
+local itemRow = Instance.new("Frame")
+itemRow.Size = UDim2.new(1, 0, 0, isMobileDevice and 60 or 50)
+itemRow.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+itemRow.BorderSizePixel = 0
+itemRow.ZIndex = 202
+itemRow.LayoutOrder = i + 1
+itemRow.Parent = scrollFrame
+local rowCorner = Instance.new("UICorner")
+rowCorner.CornerRadius = UDim.new(0, 8)
+rowCorner.Parent = itemRow
+local displayLabel = Instance.new("TextLabel")
+displayLabel.Size = UDim2.new(0.4, -10, 0, 20)
+displayLabel.Position = UDim2.new(0, 10, 0, 6)
+displayLabel.BackgroundTransparency = 1
+displayLabel.Text = itemData.display
+displayLabel.TextColor3 = Color3.fromRGB(100, 200, 255)
+displayLabel.TextSize = isMobileDevice and 12 or 13
+displayLabel.Font = Enum.Font.GothamBold
+displayLabel.TextXAlignment = Enum.TextXAlignment.Left
+displayLabel.TextTruncate = Enum.TextTruncate.AtEnd
+displayLabel.ZIndex = 203
+displayLabel.Parent = itemRow
+local realLabel = Instance.new("TextLabel")
+realLabel.Size = UDim2.new(0.4, -10, 0, 16)
+realLabel.Position = UDim2.new(0, 10, 0, 28)
+realLabel.BackgroundTransparency = 1
+realLabel.Text = "Real: " .. itemData.real
+realLabel.TextColor3 = Color3.fromRGB(120, 120, 140)
+realLabel.TextSize = 9
+realLabel.Font = Enum.Font.Gotham
+realLabel.TextXAlignment = Enum.TextXAlignment.Left
+realLabel.TextTruncate = Enum.TextTruncate.AtEnd
+realLabel.ZIndex = 203
+realLabel.Parent = itemRow
+local giveBtn = Instance.new("TextButton")
+giveBtn.Size = isMobileDevice and UDim2.new(0, 70, 0, 35) or UDim2.new(0, 80, 0, 30)
+giveBtn.Position = isMobileDevice and UDim2.new(1, -80, 0.5, -17) or UDim2.new(1, -90, 0.5, -15)
+giveBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 80)
+giveBtn.Text = "Give 500"
+giveBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+giveBtn.TextSize = isMobileDevice and 9 or 10
+giveBtn.Font = Enum.Font.GothamBold
+giveBtn.ZIndex = 203
+giveBtn.Parent = itemRow
+local giveBtnCorner = Instance.new("UICorner")
+giveBtnCorner.CornerRadius = UDim.new(0, 6)
+giveBtnCorner.Parent = giveBtn
+giveBtn.MouseButton1Click:Connect(function()
+if not giveBtn.Parent then return end
+giveBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 80)
+giveBtn.Text = "✅ Done"
+task.spawn(function()
+giveItemAsync(itemData.display)
+end)
+task.delay(1.2, function()
+if giveBtn and giveBtn.Parent then
+giveBtn.Text = "Give 500"
+giveBtn.BackgroundColor3 = Color3.fromRGB(50, 150, 80)
+end
+end)
+end)
+itemRow.MouseEnter:Connect(function()
+if itemRow.Parent then
+TweenService:Create(itemRow, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(28, 28, 38)}):Play()
+end
+end)
+itemRow.MouseLeave:Connect(function()
+if itemRow.Parent then
+TweenService:Create(itemRow, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(22, 22, 30)}):Play()
+end
+end)
+end
+end
+updateItemsList(searchBox.Text)
+searchBox:GetPropertyChangedSignal("Text"):Connect(function()
+updateItemsList(searchBox.Text)
+end)
+local closeBtnPressed = false
+closeBtn.MouseButton1Down:Connect(function()
+closeBtnPressed = true
+end)
+closeBtn.MouseButton1Up:Connect(function()
+if closeBtnPressed then
+closeBtnPressed = false
+local tweenOut = TweenService:Create(itemsFrame, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}
+)
+tweenOut:Play()
+tweenOut.Completed:Connect(function()
+if itemsFrame and itemsFrame.Parent then
+itemsFrame:Destroy()
+if floatingButtonRef and floatingButtonRef.Parent then
+floatingButtonRef.Visible = true
+floatingButtonRef.Active = true
+TweenService:Create(floatingButtonRef, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}
+):Play()
+end
+end
+end)
+end
+end)
+itemsFrame.Size = UDim2.new(0, 0, 0, 0)
+itemsFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+local tweenIn = TweenService:Create(itemsFrame, TweenInfo.new(0.4, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {Size = guiSize, Position = guiPosition}
+)
+tweenIn:Play()
+makeDraggable(itemsFrame, header)
+task.wait(0.1)
+pcall(function() searchBox:CaptureFocus() end)
+end
+local function createFloatingButton()
+local oldBtn = ScreenGui:FindFirstChild("FloatingButton")
+if oldBtn then oldBtn:Destroy() end
+local floatingBtn = Instance.new("TextButton")
+floatingBtn.Name = "FloatingButton"
+floatingBtn.Size = UDim2.new(0, 60, 0, 60)
+floatingBtn.Position = UDim2.new(0, 20, 1, -80)
+floatingBtn.BackgroundColor3 = Color3.fromRGB(80, 120, 255)
+floatingBtn.Text = "📦"
+floatingBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+floatingBtn.TextSize = 28
+floatingBtn.Font = Enum.Font.GothamBold
+floatingBtn.ZIndex = 300
+floatingBtn.Parent = ScreenGui
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 30)
+corner.Parent = floatingBtn
+local stroke = Instance.new("UIStroke")
+stroke.Thickness = 2
+stroke.Color = Color3.fromRGB(100, 150, 255)
+stroke.Parent = floatingBtn
+floatingBtn.MouseEnter:Connect(function()
+if floatingBtn.Visible then
+TweenService:Create(floatingBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(100, 150, 255)}):Play()
+end
+end)
+floatingBtn.MouseLeave:Connect(function()
+if floatingBtn.Visible then
+TweenService:Create(floatingBtn, TweenInfo.new(0.2), {BackgroundColor3 = Color3.fromRGB(80, 120, 255)}):Play()
+end
+end)
+floatingBtn.MouseButton1Click:Connect(function()
+if floatingBtn.Visible and floatingBtn.Active then
+createItemsGUI()
+end
+end)
+makeDraggable(floatingBtn, floatingBtn)
+floatingButtonRef = floatingBtn
+return floatingBtn
+end
+local function findItem(search)
+if not search then return nil end
+search = string.lower(search:match("^%s*(.-)%s*$") or "")
+local itemsFolder = ReplicatedStorage:FindFirstChild("Items")
+if not itemsFolder then
+showNotification("Error", "Items folder not found!", Color3.fromRGB(200, 50, 50))
+return nil
+end
+for _, item in ipairs(itemsFolder:GetChildren()) do
+local displayName = string.lower(getDisplayName(item))
+if displayName == search then return item end
+end
+for _, item in ipairs(itemsFolder:GetChildren()) do
+local realName = string.lower(item.Name)
+if realName == search then return item end
+end
+for _, item in ipairs(itemsFolder:GetChildren()) do
+local displayName = string.lower(getDisplayName(item))
+if string.find(displayName, search, 1, true) then return item end
+end
+for _, item in ipairs(itemsFolder:GetChildren()) do
+local realName = string.lower(item.Name)
+if string.find(realName, search, 1, true) then return item end
+end
+return nil
+end
+function giveItemAsync(itemName)
+local targetItem = findItem(itemName)
+if not targetItem then
+showNotification("Not Found", "Item not found: " .. itemName, Color3.fromRGB(200, 50, 50))
+return
+end
+local displayName = getDisplayName(targetItem)
+local realName = targetItem.Name
+showNotification("Real Item Name Is:", realName, Color3.fromRGB(100, 150, 255))
+showNotification("Giving 500", "Giving " .. displayName .. " x" .. AMOUNT, Color3.fromRGB(100, 200, 100))
+local args = { targetItem, { questName = "Dumplings Quest", questRequiredItems = {}, prizeItem = "Rainbow Dumpling"
+}
+}
+task.spawn(function()
+for i = 1, AMOUNT do
+pcall(function()
+ReplicatedStorage
+:WaitForChild("RemoteEvents")
+:WaitForChild("GetItem")
+:FireServer(unpack(args))
+end)
+end
+task.wait(1)
+showNotification("Complete", "Done! Gave " .. displayName .. " x" .. AMOUNT, Color3.fromRGB(50, 200, 100))
+end)
+end
+function giveItem(itemName)
+giveItemAsync(itemName)
+end
+local function handleCommand(message)
+if message:sub(1, #PREFIX) ~= PREFIX then return end
+local cmd = message:sub(#PREFIX + 1)
+local lowerCmd = cmd:lower()
+local itemName = cmd:match("^give me (.+)$")
+if itemName then
+giveItem(itemName)
+return
+end
+itemName = cmd:match("^give (.+)$")
+if itemName then
+giveItem(itemName)
+return
+end
+local checkItem = cmd:match("^check (.+)$")
+if checkItem then
+local found = findItem(checkItem)
+if found then
+local display = getDisplayName(found)
+local real = found.Name
+showNotification("Real Item Name Is:", real, Color3.fromRGB(100, 150, 255))
+else
+showNotification("Not Found", "Item not found: " .. checkItem, Color3.fromRGB(200, 50, 50))
+end
+return
+end
+if lowerCmd == "items all" or lowerCmd == "item all" then
+createItemsGUI()
+return
+end
+local searchTerm = cmd:match("^items (.+)$") or cmd:match("^item (.+)$")
+if searchTerm and searchTerm ~= "all" then
+createItemsGUI(searchTerm)
+return
+end
+if lowerCmd == "items" or lowerCmd == "item" then
+createItemsGUI()
+return
+end
+if lowerCmd == "help" then
+showNotification("Help", "Commands: :give {item}, :items, :check {item}", Color3.fromRGB(100, 150, 255))
+end
+end
+LP.Chatted:Connect(function(msg)
+pcall(function() handleCommand(msg) end)
+end)
+createFloatingButton()
+showNotification("500 Items + GUI Loaded", "📜 Fixed - Instant drop, no wait!", Color3.fromRGB(100, 200, 100))
